@@ -304,8 +304,17 @@
   <div class="footer-bar">NEXUS GATEWAY · SUPABASE POSTGRESQL · ROW LEVEL SECURITY · GITHUB PAGES · 2040</div>
 </div>
 
-<!-- Load config FIRST, then app logic -->
-<script src="config.js"></script>
+<script>
+/* ╔══════════════════════════════════════════════════════════╗
+   ║      ⚙️  CONFIGURAZIONE — modifica solo qui sotto        ║
+   ║  1. Vai su https://supabase.com → crea progetto          ║
+   ║  2. Project Settings → API → copia URL e anon key        ║
+   ╚══════════════════════════════════════════════════════════╝ */
+const NEXUS_CONFIG = {
+  supabaseUrl:     'YOUR_SUPABASE_URL',       // es. https://xyzabcdef.supabase.co
+  supabaseAnonKey: 'YOUR_SUPABASE_ANON_KEY',  // la chiave "anon public"
+};
+</script>
 <script>
 /* ══════════════════════════════════════════════
    CANVAS BACKGROUND
@@ -368,34 +377,70 @@ updateClock(); setInterval(updateClock,1000);
 ══════════════════════════════════════════════ */
 let supabase = null;
 
-function initSupabase() {
-  if (typeof NEXUS_CONFIG === 'undefined' ||
-      NEXUS_CONFIG.supabaseUrl === 'YOUR_SUPABASE_URL' ||
-      NEXUS_CONFIG.supabaseAnonKey === 'YOUR_SUPABASE_ANON_KEY') {
-    document.getElementById('config-banner').style.display = 'flex';
-    document.getElementById('db-status').textContent = 'NON CONFIGURATO';
-    document.querySelectorAll('.btn-submit').forEach(b => b.disabled = true);
-    return;
-  }
-  supabase = window.supabase.createClient(NEXUS_CONFIG.supabaseUrl, NEXUS_CONFIG.supabaseAnonKey);
-  checkSession();
-  setDbStatus('ONLINE', true);
-}
-
 function setDbStatus(txt, ok) {
   const el = document.getElementById('db-status');
   el.textContent = txt;
   el.className = ok ? 'connected' : 'error';
 }
 
+function initSupabase() {
+  try {
+    // Chiavi non ancora impostate → mostra avviso
+    if (typeof NEXUS_CONFIG === 'undefined' ||
+        !NEXUS_CONFIG.supabaseUrl ||
+        NEXUS_CONFIG.supabaseUrl === 'YOUR_SUPABASE_URL' ||
+        NEXUS_CONFIG.supabaseAnonKey === 'YOUR_SUPABASE_ANON_KEY') {
+      document.getElementById('config-banner').style.display = 'flex';
+      setDbStatus('NON CONFIGURATO', false);
+      document.querySelectorAll('.btn-submit').forEach(b => b.disabled = true);
+      return;
+    }
+
+    // Supabase SDK non ancora caricato (raro ma possibile offline)
+    if (typeof window.supabase === 'undefined' || typeof window.supabase.createClient !== 'function') {
+      setDbStatus('SDK NON CARICATO', false);
+      document.querySelectorAll('.btn-submit').forEach(b => b.disabled = true);
+      return;
+    }
+
+    supabase = window.supabase.createClient(
+      NEXUS_CONFIG.supabaseUrl,
+      NEXUS_CONFIG.supabaseAnonKey
+    );
+
+    // Verifica connessione reale
+    setDbStatus('CONNESSIONE...', false);
+    checkSession();
+
+  } catch (err) {
+    console.error('Supabase init error:', err);
+    setDbStatus('ERRORE CONFIG', false);
+  }
+}
+
+async function pingDb() {
+  try {
+    const { error } = await supabase.from('profiles').select('id').limit(1);
+    if (error && error.code !== 'PGRST116') throw error;
+    setDbStatus('ONLINE', true);
+  } catch {
+    setDbStatus('DB IRRAGGIUNGIBILE', false);
+  }
+}
+
 /* ══════════════════════════════════════════════
    SESSION CHECK (auto-login if JWT still valid)
 ══════════════════════════════════════════════ */
 async function checkSession() {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (session) {
-    const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-    showDashboard(session.user, profile);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    await pingDb(); // conferma connessione e aggiorna status
+    if (session) {
+      const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+      showDashboard(session.user, profile);
+    }
+  } catch {
+    setDbStatus('ERRORE CONNESSIONE', false);
   }
 }
 
